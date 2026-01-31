@@ -1,8 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { RealtimeChannel } from '@supabase/supabase-js'
+import { createError, parseError, logError, type AppError } from '@/lib/error-handler'
 
-const ICE_SERVERS = [
+export type WebRTCConnectionStatus = 'idle' | 'initializing' | 'connecting' | 'connected' | 'reconnecting' | 'failed'
+
+interface UseWebRTCReturn {
+  localStream: MediaStream | null
+  remoteStream: MediaStream | null
+  connectionStatus: WebRTCConnectionStatus
+  error: AppError | null
+  retryConnection: () => void
+}
+
+// STUN/TURN servers for better connectivity
+const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.relay.metered.ca:80' },
@@ -33,22 +45,49 @@ const ICE_SERVERS = [
   }
 ]
 
-export function useWebRTC(myId: string, partnerId: string | null, isVideo: boolean) {
+const SIGNALING_TIMEOUT = 20000
+const ICE_GATHERING_TIMEOUT = 10000
+const RECONNECT_DELAY = 2000
+const MAX_RECONNECT_ATTEMPTS = 3
+
+export function useWebRTC(myId: string, partnerId: string | null, isVideo: boolean): UseWebRTCReturn {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'failed'>('idle')
+  const [connectionStatus, setConnectionStatus] = useState<WebRTCConnectionStatus>('idle')
+  const [error, setError] = useState<AppError | null>(null)
   
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const channelRef = useRef<RealtimeChannel | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const remoteStreamRef = useRef<MediaStream | null>(null)
   const isInitiatorRef = useRef(false)
   const pendingCandidatesRef = useRef<RTCIceCandidate[]>([])
-  const remoteStreamRef = useRef<MediaStream | null>(null)
-  const partnerReadyRef = useRef(false)
+  const reconnectAttemptsRef = useRef(0)
+  const mountedRef = useRef(true)
   const offerSentRef = useRef(false)
+  const partnerReadyRef = useRef(false)
+  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Safe state updaters
+  const safeSetConnectionStatus = useCallback((status: WebRTCConnectionStatus) => {
+    if (mountedRef.current) setConnectionStatus(status)
+  }, [])
+
+  const safeSetError = useCallback((err: AppError | null) => {
+    if (mountedRef.current) setError(err)
+  }, [])
+
+  const safeSetRemoteStream = useCallback((stream: MediaStream | null) => {
+    if (mountedRef.current) setRemoteStream(stream)
+  }, [])
+
+  // Cleanup all resources
   const cleanup = useCallback(() => {
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current)
+      connectionTimeoutRef.current = null
+    }
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current)
       retryTimeoutRef.current = null
@@ -65,11 +104,12 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
     remoteStreamRef.current = null
     partnerReadyRef.current = false
     offerSentRef.current = false
-    setRemoteStream(null)
-    setConnectionStatus('idle')
-  }, [])
+    safeSetRemoteStream(null)
+    safeSetConnectionStatus('idle')
+  }, [safeSetConnectionStatus, safeSetRemoteStream])
 
-  const setupMedia = useCallback(async () => {
+  // Get user media with constraints
+  const setupMedia = useCallback(async (): Promise<MediaStream | null> => {
     if (!isVideo) return null
     if (localStreamRef.current) return localStreamRef.current
     
@@ -88,14 +128,21 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
         }
       })
       localStreamRef.current = stream
-      setLocalStream(stream)
+      if (mountedRef.current) setLocalStream(stream)
       return stream
     } catch (err) {
-      console.error('Failed to get media:', err)
+      const appError = parseError(err)
+      if (appError.message.includes('Permission denied') || appError.message.includes('NotAllowed')) {
+        safeSetError(createError('MEDIA_ACCESS_DENIED'))
+      } else {
+        safeSetError(createError('MEDIA_NOT_SUPPORTED'))
+      }
+      logError(appError, 'setupMedia')
       return null
     }
-  }, [isVideo])
+  }, [isVideo, safeSetError])
 
+  // Apply bandwidth constraints for better performance
   const applyBandwidthConstraints = useCallback((pc: RTCPeerConnection) => {
     const senders = pc.getSenders()
     senders.forEach(sender => {
@@ -106,12 +153,13 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
         }
         params.encodings[0].maxBitrate = 500000
         params.encodings[0].scaleResolutionDownBy = 1.5
-        sender.setParameters(params).catch(e => console.log('Bitrate setting not supported:', e))
+        sender.setParameters(params).catch(() => {})
       }
     })
   }, [])
 
-  const createPeerConnection = useCallback((stream: MediaStream | null, partnerId: string) => {
+  // Create and configure peer connection
+  const createPeerConnection = useCallback((stream: MediaStream | null, targetPartnerId: string) => {
     if (pcRef.current) {
       pcRef.current.close()
     }
@@ -140,7 +188,7 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
           remoteStreamRef.current.removeTrack(existingTrack)
         }
         remoteStreamRef.current.addTrack(event.track)
-        setRemoteStream(new MediaStream(remoteStreamRef.current.getTracks()))
+        safeSetRemoteStream(new MediaStream(remoteStreamRef.current.getTracks()))
       }
     }
 
@@ -149,42 +197,58 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
         channelRef.current.send({
           type: 'broadcast',
           event: 'ice-candidate',
-          payload: { candidate: event.candidate.toJSON(), from: myId, to: partnerId }
+          payload: { candidate: event.candidate.toJSON(), from: myId, to: targetPartnerId }
         }).catch(e => console.error('Failed to send ICE candidate:', e))
       }
     }
 
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState
-      console.log('ICE state:', state)
-      if (state === 'connected' || state === 'completed') {
-        setConnectionStatus('connected')
-        applyBandwidthConstraints(pc)
-      } else if (state === 'failed') {
-        console.log('ICE failed, restarting...')
-        pc.restartIce()
-      } else if (state === 'disconnected') {
-        setTimeout(() => {
-          if (pcRef.current?.iceConnectionState === 'disconnected') {
-            console.log('Still disconnected, restarting ICE...')
-            pcRef.current.restartIce()
+      console.log('ICE connection state:', state)
+      
+      switch (state) {
+        case 'connected':
+        case 'completed':
+          safeSetConnectionStatus('connected')
+          reconnectAttemptsRef.current = 0
+          applyBandwidthConstraints(pc)
+          break
+        case 'failed':
+          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+            safeSetConnectionStatus('reconnecting')
+            pc.restartIce()
+            reconnectAttemptsRef.current++
+          } else {
+            safeSetConnectionStatus('failed')
+            safeSetError(createError('WEBRTC_FAILED'))
           }
-        }, 3000)
+          break
+        case 'disconnected':
+          safeSetConnectionStatus('reconnecting')
+          // Wait a bit before trying to restart ICE
+          retryTimeoutRef.current = setTimeout(() => {
+            if (pcRef.current?.iceConnectionState === 'disconnected') {
+              pcRef.current.restartIce()
+            }
+          }, RECONNECT_DELAY)
+          break
       }
     }
 
     pc.onconnectionstatechange = () => {
       console.log('Connection state:', pc.connectionState)
       if (pc.connectionState === 'connected') {
-        setConnectionStatus('connected')
+        safeSetConnectionStatus('connected')
       } else if (pc.connectionState === 'failed') {
-        setConnectionStatus('failed')
+        safeSetConnectionStatus('failed')
+        safeSetError(createError('WEBRTC_FAILED'))
       }
     }
 
     return pc
-  }, [myId, applyBandwidthConstraints])
+  }, [myId, applyBandwidthConstraints, safeSetConnectionStatus, safeSetRemoteStream, safeSetError])
 
+  // Process pending ICE candidates
   const addPendingCandidates = useCallback(async () => {
     if (!pcRef.current || !pcRef.current.remoteDescription) return
     
@@ -200,6 +264,7 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
     }
   }, [])
 
+  // Send offer to partner
   const sendOffer = useCallback(async () => {
     if (!pcRef.current || !channelRef.current || !partnerId || offerSentRef.current) return
     
@@ -219,18 +284,32 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
       offerSentRef.current = true
     } catch (e) {
       console.error('Error creating/sending offer:', e)
+      const appError = parseError(e)
+      logError(appError, 'sendOffer')
     }
   }, [myId, partnerId])
 
+  // Retry connection manually
+  const retryConnection = useCallback(() => {
+    reconnectAttemptsRef.current = 0
+    cleanup()
+    safeSetConnectionStatus('initializing')
+    // The main useEffect will re-initialize the connection
+  }, [cleanup, safeSetConnectionStatus])
+
+  // Main effect to establish WebRTC connection
   useEffect(() => {
     if (!partnerId || !myId || !isVideo) return
 
+    mountedRef.current = true
     console.log('Setting up WebRTC connection:', myId, '->', partnerId)
-    setConnectionStatus('connecting')
+    safeSetConnectionStatus('initializing')
+    safeSetError(null)
     isInitiatorRef.current = myId < partnerId
     pendingCandidatesRef.current = []
     partnerReadyRef.current = false
     offerSentRef.current = false
+    reconnectAttemptsRef.current = 0
 
     const roomId = [myId, partnerId].sort().join('-')
     const channel = supabase.channel(`webrtc:${roomId}`, {
@@ -242,12 +321,24 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
 
     const initConnection = async () => {
       const stream = await setupMedia()
+      if (!mountedRef.current) return
+      
       if (!stream) {
-        console.error('No media stream available')
+        safeSetConnectionStatus('failed')
         return
       }
 
       pc = createPeerConnection(stream, partnerId)
+      safeSetConnectionStatus('connecting')
+
+      // Set up connection timeout
+      connectionTimeoutRef.current = setTimeout(() => {
+        if (pcRef.current?.connectionState !== 'connected') {
+          console.log('Connection timeout')
+          safeSetConnectionStatus('failed')
+          safeSetError(createError('CONNECTION_TIMEOUT'))
+        }
+      }, SIGNALING_TIMEOUT)
 
       channel
         .on('broadcast', { event: 'ready' }, async ({ payload }) => {
@@ -316,22 +407,25 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
         .subscribe(async (status) => {
           console.log('Channel status:', status)
           if (status === 'SUBSCRIBED') {
+            // Announce we're ready
             await channel.send({
               type: 'broadcast',
               event: 'ready',
               payload: { from: myId }
             })
             
+            // If we're the initiator, send offer after a short delay
             if (isInitiatorRef.current) {
               retryTimeoutRef.current = setTimeout(async () => {
-                if (!offerSentRef.current) {
+                if (!offerSentRef.current && mountedRef.current) {
                   console.log('Sending offer (delayed)')
                   await sendOffer()
                 }
               }, 1000)
               
+              // Retry offer if not connected after 3 seconds
               setTimeout(async () => {
-                if (pcRef.current?.connectionState !== 'connected' && !offerSentRef.current) {
+                if (pcRef.current?.connectionState !== 'connected' && !offerSentRef.current && mountedRef.current) {
                   console.log('Retrying offer...')
                   offerSentRef.current = false
                   await sendOffer()
@@ -345,10 +439,12 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
     initConnection()
 
     return () => {
+      mountedRef.current = false
       cleanup()
     }
-  }, [myId, partnerId, isVideo, setupMedia, createPeerConnection, cleanup, addPendingCandidates, sendOffer])
+  }, [myId, partnerId, isVideo, setupMedia, createPeerConnection, cleanup, addPendingCandidates, sendOffer, safeSetConnectionStatus, safeSetError])
 
+  // Cleanup local stream on unmount
   useEffect(() => {
     return () => {
       if (localStreamRef.current) {
@@ -358,5 +454,5 @@ export function useWebRTC(myId: string, partnerId: string | null, isVideo: boole
     }
   }, [])
 
-  return { localStream, remoteStream, connectionStatus }
+  return { localStream, remoteStream, connectionStatus, error, retryConnection }
 }

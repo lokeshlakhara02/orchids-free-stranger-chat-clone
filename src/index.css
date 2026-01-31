@@ -1,0 +1,280 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Lakhari Chat - Vibrant Orange Theme */
+    --background: 0 0% 100%;
+    --foreground: 240 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+    
+    /* Primary - Vibrant Orange */
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Secondary - Soft Orange tint */
+    --secondary: 30 100% 97%;
+    --secondary-foreground: 24 80% 30%;
+    
+    /* Muted - Neutral gray */
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    
+    /* Accent - Warm coral */
+    --accent: 16 85% 57%;
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 24 95% 53%;
+
+    /* Charts */
+    --chart-1: 24 95% 53%;
+    --chart-2: 16 85% 57%;
+    --chart-3: 30 100% 50%;
+    --chart-4: 340 70% 50%;
+    --chart-5: 0 70% 50%;
+
+    /* Sidebar */
+    --sidebar: 30 100% 97%;
+    --sidebar-foreground: 240 10% 10%;
+    --sidebar-primary: 24 95% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 16 85% 57%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 24 95% 53%;
+
+    /* Fonts */
+    --font-sans: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', monospace;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+    /* Misc */
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Dark mode - Deep zinc with orange accents */
+    --background: 240 10% 4%;
+    --foreground: 0 0% 95%;
+    --card: 240 10% 6%;
+    --card-foreground: 0 0% 95%;
+    --popover: 240 10% 6%;
+    --popover-foreground: 0 0% 95%;
+    
+    /* Primary - Keep vibrant orange */
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Secondary - Dark surface */
+    --secondary: 240 6% 12%;
+    --secondary-foreground: 0 0% 75%;
+    
+    --muted: 240 6% 12%;
+    --muted-foreground: 240 5% 55%;
+    
+    /* Accent - Coral orange */
+    --accent: 16 85% 57%;
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 240 6% 18%;
+    --input: 240 6% 18%;
+    --ring: 24 95% 53%;
+
+    /* Charts */
+    --chart-1: 24 95% 53%;
+    --chart-2: 16 85% 57%;
+    --chart-3: 30 100% 50%;
+    --chart-4: 340 70% 50%;
+    --chart-5: 0 70% 50%;
+
+    /* Sidebar */
+    --sidebar: 240 10% 6%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 24 95% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 6% 12%;
+    --sidebar-accent-foreground: 0 0% 75%;
+    --sidebar-border: 240 6% 18%;
+    --sidebar-ring: 24 95% 53%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom scrollbar */
+@layer components {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+}
+
+/* Animation utilities */
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.4s ease-out forwards;
+  }
+
+  .animate-slide-in-right {
+    animation: slideInRight 0.3s ease-out forwards;
+  }
+
+  .animate-pulse-soft {
+    animation: pulseSoft 2s ease-in-out infinite;
+  }
+
+  .animate-bounce-soft {
+    animation: bounceSoft 1s ease-in-out infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulseSoft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes bounceSoft {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* Status indicator animations */
+.status-connected {
+  @apply bg-emerald-500;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  animation: statusPulseGreen 2s ease-in-out infinite;
+}
+
+.status-connecting {
+  @apply bg-amber-500;
+  animation: statusPulseAmber 1.5s ease-in-out infinite;
+}
+
+.status-error {
+  @apply bg-red-500;
+  animation: statusPulseRed 1.5s ease-in-out infinite;
+}
+
+@keyframes statusPulseGreen {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes statusPulseAmber {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
+  }
+}
+
+@keyframes statusPulseRed {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* Glass effect */
+.glass {
+  @apply bg-background/80 backdrop-blur-lg border border-border/50;
+}
+
+.glass-dark {
+  @apply bg-zinc-900/80 backdrop-blur-lg border border-zinc-800/50;
+}
